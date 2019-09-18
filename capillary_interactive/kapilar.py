@@ -12,14 +12,36 @@ import shutil
 from PIL import Image
 from PyQt5.QtCore import QFile, QTextStream#Dark theme
 import breeze_resources
-
+import pickle
 from qevent_to_name import *
 
-class SourceDirOpener(QWidget):
+class FileDialog(QWidget):
+    outfilepath = pyqtSignal(str)
     folder = pyqtSignal(str)
-    def __init__(self):
+    filepath = pyqtSignal(str)
+
+    def __init__(self, file_ending = ""):
+        self.file_ending = file_ending
         QWidget.__init__(self)
-    def get_filenames(self):
+
+    def create_outputfile(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        filename, _ = QFileDialog.getSaveFileName(None,"Select the output file", "", self.file_ending +" (*."+self.file_ending+");;", options=options)
+
+        if filename:
+            if not filename.endswith(".pkl"):
+                filename += ".pkl"
+            self.outfilepath.emit(filename)
+
+    def get_existing_file(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        filename, _ = QFileDialog.getOpenFileName(None,"Select the output file", "", self.file_ending +" (*."+self.file_ending+");;", options=options)
+        if filename:
+            self.filepath.emit(filename)
+
+    def get_folder_path(self):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         path = QFileDialog.getExistingDirectory(None,"Select folder...",os.getcwd(),options=options)
@@ -42,12 +64,18 @@ class MainApp(QWidget):
         self.files = []#list of filepaths
         self.tempfiles_path = os.getcwd()+"/tempfiles/"
 
+        self.cascade_outfile_dialog = FileDialog("pkl")
+        self.cascade_loadfile_dialog = FileDialog("pkl")
+
         self.idx_image = 0
         self.make_connections()
 
 
     def shut_down(self):
-        shutil.rmtree(self.tempfiles_path)
+        try:
+            shutil.rmtree(self.tempfiles_path)
+        except:
+            pass
         sys.exit()
 
     def load_files(self, path):
@@ -77,26 +105,63 @@ class MainApp(QWidget):
         self.ui.add_to_2d_cascade.clicked.connect(lambda: self.add_function_to_cascade(self.ui.combo_box_2d_cascade,self.model_2d_cascade))
         self.ui.remove_from_2d_cascade.clicked.connect(lambda: self.remove_selected_from_model(self.model_2d_cascade, self.ui.view_2d_cascade))
         self.ui.apply_cascade_2d.clicked.connect(self.apply_cascade)
+        self.ui.save_2d_cascade.clicked.connect(self.cascade_outfile_dialog.create_outputfile)
+        self.cascade_outfile_dialog.outfilepath.connect(lambda path: self.save_cascade_model(self.model_2d_cascade,path))
+        self.ui.load_2d_cascade.clicked.connect(self.cascade_loadfile_dialog.get_existing_file)
+        self.cascade_loadfile_dialog.filepath.connect(lambda path: self.load_cascade_model(self.model_2d_cascade,path))
 
     def apply_cascade(self):
+        img = None
         try:
             img = Image.open(self.files[self.idx_image])
             img = img.convert('RGB')
         except:
-            #TODO: return
-            pass
+            return
+
         operations = self.cascade_model_to_list( self.model_2d_cascade)
+        data = np.array(img, dtype=np.double)[:,:,0]
         try:
-            pass
-        except:
-            pass
+            for o in operations:
+                data = name_to_function[o[0]](data,*o[1:])
+                if o[0]=="crop":
+                    img = data
+            if type(data)==type(np.array(1)) and data.ndim == 2:
+                self.ui.main_plot.update(color_plot(data))
+            else:
+                self.ui.main_plot.update(color_plot(img, [data]))
+
+            self.ui.error_2d_cascade.setText("")
+        except Exception as e:
+            self.ui.error_2d_cascade.setText(str(e))
+
 
     def cascade_model_to_list(self, model):
+        data = []
         for y in range(model.rowCount()):
+            row = []
             for x in range(model.columnCount()):
                 item = model.item(y,x)
-                if item:
-                    print(item.text())
+                if item and item.text() != "":
+                    try:
+                        row.append(int(item.text()))
+                    except:
+                        try:
+                            row.append(float(item.text()))
+                        except:
+                            row.append(item.text())
+            data.append(row)
+        return data
+
+    def save_cascade_model(self, model, filename):
+        with open(filename, "wb") as f:
+            pickle.dump(self.cascade_model_to_list(model),f)
+
+    def load_cascade_model(self, model, filename):
+        with open(filename, "rb") as f:
+            cascade = pickle.load(f)
+            print(cascade)
+            for row in cascade:
+                self.add_to_cascade_model(model, *row)
 
 
     def add_function_to_cascade(self, combo_box, model):
@@ -169,8 +234,6 @@ class MainApp(QWidget):
             model.removeRows(idxs[0].row(),1)
 
 
-
-
 class Kapilar():
     def __init__(self):
         app = QtWidgets.QApplication(sys.argv)
@@ -180,7 +243,7 @@ class Kapilar():
         self.ui = Ui_kapilar()#Instanciate our UI
         self.ui.setupUi(MainWindow)#Setup our UI as this MainWindow
 
-        self.source_dir_opener = SourceDirOpener()
+        self.source_dir_opener = FileDialog()
 
         self.main_app = MainApp(self.ui.centralwidget, self.ui)#Install MainApp as event filter for handling of arrow keys
 
@@ -207,7 +270,7 @@ class Kapilar():
         app.setStyleSheet(stream.readAll())
 
     def make_connections(self):
-        self.ui.open_file.triggered.connect(self.source_dir_opener.get_filenames)
+        self.ui.open_file.triggered.connect(self.source_dir_opener.get_folder_path)
         self.ui.exit.triggered.connect(self.main_app.shut_down)
         self.source_dir_opener.folder.connect(self.main_app.load_files)
 

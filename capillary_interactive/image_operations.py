@@ -21,22 +21,15 @@ def fig2rgb_array(fig):
     ncols, nrows = fig.canvas.get_width_height()
     return np.fromstring(buf, dtype=np.uint8).reshape(nrows, ncols, 3)
 
-def color_plot(images,figsize=(12, 8),dpi=200):
-    """fig = plt.figure(figsize=figsize,dpi=dpi)
-    fig.subplots_adjust(wspace=0, hspace=0)
-    gs = gridspec.GridSpec(2, 1, height_ratios=[3, .5])
-    ax = [plt.subplot(gs[x]) for x in range(2)]
-
-    for img in images:
-        is_purple, hist_hue_purple = check_purple(img)
-        ax[0].plot(hist_hue_purple)
-    ax[0].set_xlim(0,99)
-    ax[1].imshow([np.linspace(0, 100, 100)], aspect='auto', cmap=plt.get_cmap("hsv"))
-    ax[0].set_xticklabels([])
-    ax[1].set_yticklabels([])
-    ax[1].set_xticks([x for x in range(0,99,5)])
-    return fig2rgb_array(fig)"""
-    pass
+def color_plot(image, plots = [], figsize=(12,8),dpi=200):
+    fig, ax = plt.subplots(figsize=figsize,dpi=dpi)
+    plt.tight_layout(pad=0)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.imshow(image, aspect="auto")
+    for p in plots:
+        ax.plot(p, color="red")
+    return fig2rgb_array(fig)
 
 def load_docx(path):
     """ Loads a docx file and returns all images contained in it
@@ -62,7 +55,7 @@ def extract_pics_from_docx(path, target_path):
         path: Path to a docx file
         target_path: The folder the images will be written to
     """
-    os.makedirs(target_path, exist_ok=True) 
+    os.makedirs(target_path, exist_ok=True)
 
     images = []
     zip_ref = zipfile.ZipFile(path, 'r')
@@ -154,10 +147,9 @@ def sample_via_threshold(image_array,start_from="top", threshold=.6, start = 500
 
     sampled_points = []
 
-
     for x in range(image_array.shape[1]):
+        found = False
         for y in ran:#From bottom to top
-            found = False
             if(np.abs(image_array[y,x])>threshold):
                 found = True
                 sampled_points.append(y+ shift)
@@ -219,6 +211,6 @@ function_to_default_params["blur"] = [20,10]
 function_to_default_params["gradient columnwise"] = []
 function_to_default_params["sample via threshold"]=["top",0.6,200,0]
 function_to_default_params["gaussian filter nan"]=[4]
-function_to_default_params["flip_ud"] = [1000]
+function_to_default_params["flip ud"] = []
 function_to_default_params["horizontal component"] = []
 function_to_default_params["remove isolated pixels"] = [4,6]
