@@ -19,11 +19,17 @@ import matplotlib
 from collections import defaultdict
 from skimage.transform import (hough_line, hough_line_peaks, probabilistic_hough_line)
 
+import ast
+
+from skimage.util.shape import view_as_windows#For sliding window
+
 def fig2rgb_array(fig):
     fig.canvas.draw()
     buf = fig.canvas.tostring_rgb()
     ncols, nrows = fig.canvas.get_width_height()
-    return np.fromstring(buf, dtype=np.uint8).reshape(nrows, ncols, 3)
+    img = np.fromstring(buf, dtype=np.uint8).reshape(nrows, ncols, 3)
+    #Image.fromarray(img).save("othertest.png")
+    return img
 
 def image_to_cascade_data(image):
     data = defaultdict()
@@ -57,6 +63,36 @@ def color_plot(image, plot = None, figsize=(12,8),dpi=200, scatter=True, slope_i
             ax.plot(x, intercept+x*slope, c = 'orange')
 
     return fig2rgb_array(fig)
+
+
+def texture_based_segmentation(data,window_size=10, stride =10, mode = "square"):
+    img = data["image_array"]
+    mean_std_y = None
+    mean_std_x = None
+    windows = view_as_windows(img,(window_size,window_size),int(stride))
+
+    if mode == "square":
+        collapsed = np.reshape(windows, [windows.shape[0],windows.shape[1],window_size*window_size])
+        #collapsed -= np.mean(collapsed,axis=2,keepdims=True)
+        mean_std_window = np.std(collapsed,axis=2)
+        data["image_array"] = mean_std_window
+    if mode == "y" or mode == "combined":
+        slice = windows[:,:,window_size//2:(window_size//2)+1,:]
+        slice = np.reshape(slice,[slice.shape[0],slice.shape[1],window_size])
+        #slice -= np.mean(slice,axis=2,keepdims=True)
+        mean_std_y = np.std(slice, axis = 2)
+        data["image_array"] = mean_std_y
+    if mode == "x" or mode == "combined":
+        slice = windows[:,:,:,window_size//2:(window_size//2)+1]
+        slice = np.reshape(slice,[slice.shape[0],slice.shape[1],window_size])
+        #slice -= np.mean(slice,axis=2,keepdims=True)
+        mean_std_x = np.std(slice, axis = 2)
+        data["image_array"] = mean_std_x
+    if mode == "combined":
+        img = (mean_std_x+mean_std_y)/2
+        data["image_array"] = img
+    return data
+
 
 def load_docx(path):
     """ Loads a docx file and returns all images contained in it
@@ -171,7 +207,7 @@ def assign_columnwise(data, base_pos, min_columwidth = 5, pixels_per_micrometer=
     data["1d_array"] = simplified
 
     data["columnwise"] = (image_height-np.array(columnwise)-(image_height-base_pos))/pixels_per_micrometer
-    del(data["houghlines"])
+    #del(data["houghlines"])
 
     return data
 
@@ -267,24 +303,16 @@ def gradient_columnwise(data):
 
 def gaussian_filter_nan(data, sigma):
     array = data["1d_array"]
-    U = np.asarray(array)
+    vector = np.asarray(array)
 
-    if np.isnan(U[0]):
-        U[0]=np.nanmean(U)
-    if np.isnan(U[-1]):
-        U[-1]=np.nanmean(U)
-
-    V=U.copy()
-    V[np.isnan(U)]=0
-    VV=gaussian_filter(V,sigma=sigma)
-
-    W=0*U.copy()+1
-    W[np.isnan(U)]=0
-    WW= gaussian_filter(W,sigma=sigma)
-
-    epsilon=0.000001
-    Z=VV/(WW+epsilon)
-    data["1d_array"] = Z
+    if np.isnan(vector[0]):
+        vector[0]=np.nanmean(vector)#TODO
+    if np.isnan(vector[-1]):
+        vector[-1]=np.nanmean(vector)
+    nans, x = np.isnan(vector), lambda z: z.nonzero()[0]
+    vector[nans]= np.interp(x(nans), x(~nans), vector[~nans])
+    vector = gaussian_filter(vector,sigma=sigma)
+    data["1d_array"] = np.array(vector)
     return data
 
 def flip_ud(data,image_height):
@@ -354,6 +382,41 @@ def apply_cascade(data, cascade):
         current_data = name_to_function[function](current_data,*parameters)
     return current_data
 
+def mask_values(data,remove,add):
+    image_array = data["image_array"]
+    try:
+        remove = ast.literal_eval(remove)
+        add = ast.literal_eval(add)
+    except:
+        raise Exception("Invalid list entered for mask values")
+
+    mask = np.ones(image_array.shape,dtype=np.int32)
+    for top, left, bottom, right in remove:
+        top = max(0,top)#Make sure none of the values is smaller then 0
+        left = max(0,left)
+        bottom = max(0,bottom)
+        right = max(0,right)
+
+        top = min(mask.shape[0]-1,top)#Make sure none of the values is larger the image
+        left = min(mask.shape[1]-1,left)
+        bottom = min(mask.shape[0]-1,bottom)
+        right = min(mask.shape[1]-1,right)
+
+        mask[top:bottom,left:right] = 0#mask out values
+
+    points = data["1d_array"]
+    new_points = []
+    for y, x in zip(points,np.arange(len(points))):
+        try:
+            if(mask[int(y),int(x)]):
+                new_points.append(y)
+            else:
+                new_points.append(np.nan)
+        except Exception as e:
+            print(e)
+            new_points.append(np.nan)
+    data["1d_array"] = new_points
+    return data
 
 name_to_function = {}
 name_to_function["blur columnwise"] = blur_columnwise
@@ -368,6 +431,8 @@ name_to_function["remove isolated pixels"] = remove_isolated_pixels
 name_to_function["detect vertical lines"] = detect_vertical_lines
 name_to_function["equalize histogram"] = equalize_histogram
 name_to_function["assign columnwise"] = assign_columnwise
+name_to_function["mask values"] = mask_values
+name_to_function["texture based segmentation"] = texture_based_segmentation
 
 function_to_default_params = {}
 function_to_default_params["crop"] = [200,20,-200,-20]
@@ -382,3 +447,5 @@ function_to_default_params["remove isolated pixels"] = [4,6]
 function_to_default_params["detect vertical lines"] = [1,100,-100,20]
 function_to_default_params["equalize histogram"] =[]
 function_to_default_params["assign columnwise"] = [-1, 5]
+function_to_default_params["mask values"] = ["[]","[]"]
+function_to_default_params["texture based segmentation"] = [50,3,"combined"]

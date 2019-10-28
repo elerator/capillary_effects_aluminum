@@ -18,6 +18,13 @@ class ImageDisplay(QLabel):
         self.setMinimumSize(320, 180)#Set minimum size
         self.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)# Set size policy to expanding
         self.setAlignment(Qt.AlignCenter)
+
+        self.img_scaling_ratio = 1#Updated upon resizeEvent
+        self.scaled_img_margin_left = None#Updated upon resizeEvent
+        self.scaled_img_margin_top = None#Updated upon resizeEvent
+        self.original_img_width = None#init via update
+        self.original_img_height = None#init via update
+
         self.update()
         self.set_light_gray_background()
 
@@ -37,8 +44,15 @@ class ImageDisplay(QLabel):
         """
         size = self.size()
         size = QSize(int(size.width()),int(size.height()))
-        scaledPix = self.pixmap.scaled(size, Qt.KeepAspectRatio, transformMode = Qt.SmoothTransformation )
-        self.setPixmap(scaledPix)
+        scaled = self.pixmap.scaled(size, Qt.KeepAspectRatio, transformMode = Qt.SmoothTransformation )
+
+        self.scaled_img_margin_left = (self.width() - scaled.width())/2
+        self.scaled_img_margin_top = (self.height() - scaled.height())/2
+        self.img_scaling_ratio = self.original_img_height/scaled.height()
+
+        #print(self.img_scaling_ratio)
+
+        self.setPixmap(scaled)
 
     def update(self, frame = None):
         """ Upates the pixmap when a new frame is to be displayed.
@@ -58,7 +72,7 @@ class ImageDisplay(QLabel):
             bytesPerLine = 3 * width
             format = QImage.Format_RGB888
         elif frame.shape[2] == 4:
-            print(frame.shape)
+            #print(frame.shape)
             bytesPerLine = 4 * width
             format = QImage.Format_ARGB32
         else:
@@ -70,3 +84,6 @@ class ImageDisplay(QLabel):
         size = self.size()
         scaledPix = self.pixmap.scaled(size, Qt.KeepAspectRatio, transformMode = Qt.SmoothTransformation)
         self.setPixmap(scaledPix)
+        self.original_img_width = width
+        self.original_img_height = height
+        self.resizeEvent(QResizeEvent(self.size(), QSize()))

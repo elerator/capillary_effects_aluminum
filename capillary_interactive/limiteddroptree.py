@@ -10,5 +10,6 @@ class LimitedDropTree(QTreeView):
 
     def dropEvent(self, evt):
         """ Executes dropEvent when taegetlocation is within first row"""
+        #TODO: self.indexAt(index).row()==0 insted
         if self.header().sectionSize(0)>evt.pos().x():#Only execute drop when on first column
             QTreeView.dropEvent(self, evt)

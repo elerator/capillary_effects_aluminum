@@ -1,9 +1,9 @@
 from view import *
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QWidget, QMessageBox
+from PyQt5.QtWidgets import QWidget, QMessageBox, QMenu
 from PyQt5.QtWidgets import QMainWindow, QFileDialog
-from PyQt5.QtCore import pyqtSignal, Qt, QModelIndex
-from PyQt5.QtGui import QStandardItemModel
+from PyQt5.QtCore import pyqtSignal, Qt, QModelIndex, QPoint, QRect
+from PyQt5.QtGui import QStandardItemModel, QCursor
 from image_operations import *
 import sys
 import re
@@ -14,9 +14,12 @@ from PyQt5.QtCore import QFile, QTextStream#Dark theme
 import breeze_resources
 import pickle
 from qevent_to_name import *
+from selectboxoverlay import *
 
 import hashlib
+import ast
 
+#87, 34
 class FileDialog(QWidget):
     outfilepath = pyqtSignal(str)
     folder = pyqtSignal(str)
@@ -26,7 +29,7 @@ class FileDialog(QWidget):
         self.file_ending = file_ending
         QWidget.__init__(self)
 
-    def create_outputfile(self):
+    def create_output_file(self):
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         filename, _ = QFileDialog.getSaveFileName(None,"Select the output file", "", self.file_ending +" (*."+self.file_ending+");;", options=options)
@@ -35,6 +38,17 @@ class FileDialog(QWidget):
             if not filename.endswith(".pkl"):
                 filename += ".pkl"
             self.outfilepath.emit(filename)
+
+    def get_file(self):
+        dialog = QFileDialog()
+        dialog.setFileMode(QFileDialog.AnyFile)
+        dialog.setNameFilter(self.file_ending +" (*."+self.file_ending+");;")
+        #filenames = QStringList()
+        filenames = None
+
+        if dialog.exec_():
+            filenames = dialog.selectedFiles()
+            self.filepath.emit(filenames[0])
 
     def get_existing_file(self):
         options = QFileDialog.Options()
@@ -61,41 +75,139 @@ class MainApp(QWidget):
         self.widget_handled = widget_handled #Widget for event Handling. All events are checked and if not arrow keys passed on. See eventFilter below
         QWidget.__init__(self, widget_handled)
 
-        self.model_cascade_1 = self.get_cascade_model(self.ui.view_cascade_1,self.ui.combo_box_cascade_1)
-        self.model_cascade_2 = self.get_cascade_model(self.ui.view_cascade_2,self.ui.combo_box_cascade_2)
+        self.model_cascade_1 = self.get_cascade_model(self.ui.view_cascade_1, self.ui.combo_box_cascade_1)
+        self.model_cascade_2 = self.get_cascade_model(self.ui.view_cascade_2, self.ui.combo_box_cascade_2)
 
-        self.files = []#list of filepaths
+        self.files = []#list of input filepaths (each filepath begins with self.files_root_directory)
+        self.files_root_directory = ""#Root directory of input files
         self.tempfiles_path = os.getcwd()+"/tempfiles/"
 
         self.use_cropped = False
 
         self.cascade_outfile_dialog_1 = FileDialog("pkl")
         self.cascade_loadfile_dialog_1 = FileDialog("pkl")
+
+        self.cascade_specify_output_1 = FileDialog()
+        self.output_location = ""
+
         self.cascade_outfile_dialog_2 = FileDialog("pkl")
         self.cascade_loadfile_dialog_2 = FileDialog("pkl")
+
+        self.cascade_load_attributions_1 = FileDialog("ini")
+        self.cascade_load_attributions_2 = FileDialog("ini")
 
         self.attributions_cascade_1 = {}
         self.attributions_cascade_2 = {}
 
-        try:
-            with open(os.getcwd()+"/"+"attributions_cascade_1.ini", "rb") as f:
-                self.attributions_cascade_1 = pickle.load(f)
-        except Exception as e:
-            pass
+        self.filename_attributions_1 = os.getcwd()+"/"+"attributions_cascade_1.ini"#Load default attributions
+        self.filename_attributions_2 = os.getcwd()+"/"+"attributions_cascade_2.ini"
+        self.load_attributions(self.filename_attributions_1,self.filename_attributions_2)
 
-        try:
-            with open(os.getcwd()+"/"+"attributions_cascade_2.ini", "rb") as f:
-                self.attributions_cascade_2 = pickle.load(f)
-        except:
-            pass
+        #Create selectboxoverlay &  specify variable that specifies where the cropped values should end up
+        self.box = SelectBoxOverlay(self.ui.main_plot)
+        self.target_of_selected_coordinates = None#Cropped values should end up here
+        self.box.coordinates.connect(self.append_selection_to_parameters)
 
         self.use_attributions_cascade_1 = True
         self.use_attributions_cascade_2 = True
 
         self.idx_image = 0
+
+        #Set context menu       #this works for left click...self.ui.view_cascade_1.clicked.connect(lambda index: self.treeMedia_doubleClicked(index,self.ui.view_cascade_1))
+        self.ui.view_cascade_1.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.ui.view_cascade_1.customContextMenuRequested.connect(lambda pos: self.show_cascade_context_menu(pos, self.ui.view_cascade_1,self.model_cascade_1))
+
+        #Establish connections between gui and backend
         self.make_connections()
 
+    def specify_output_location(self, folder):
+        print("creating output")
+        self.output_location = folder
+        for f in self.files:#Create a nested folder structure that will contain one .csv file per input file
+            if os.path.isdir(f):
+                os.makedirs(self.output_location+"/"+f[len(self.files_root_directory):], exist_ok=True)
+        #except: #TODO
 
+    def append_selection_to_parameters(self, coordinates):
+        if type(self.target_of_selected_coordinates) == type(None):
+            return
+        try:
+            coordinates = np.array([coordinates.top(),coordinates.left(),coordinates.bottom(),coordinates.right()],dtype=np.float32)
+            coordinates[0] -= self.ui.main_plot.scaled_img_margin_top#Coordinates are relative to qlabel -> Substract upper left point
+            coordinates[2] -= self.ui.main_plot.scaled_img_margin_top
+            coordinates[1] -= self.ui.main_plot.scaled_img_margin_left
+            coordinates[3] -= self.ui.main_plot.scaled_img_margin_left
+            coordinates *= self.ui.main_plot.img_scaling_ratio#Transform coordinates into pixels of the rendered plot
+
+            coordinates[0] -= 34#Substract upper left corner in matplotlib plot where depiction begins
+            coordinates[1] -= 87
+            coordinates[2] -= 34#Substract upper left corner in matplotlib plot where depiction begins
+            coordinates[3] -= 87
+            #transform scale from matplib_pixels to original_pixels
+            shape_before_plotting = np.array(Image.open(self.files[self.idx_image])).shape
+            y_scaling_ratio_rendering = shape_before_plotting[0]/1495#1520
+            x_scaling_ratio_rendering = shape_before_plotting[1]/2268#2230
+
+            coordinates[0] *= y_scaling_ratio_rendering
+            coordinates[1] *= x_scaling_ratio_rendering
+            coordinates[2] *= y_scaling_ratio_rendering
+            coordinates[3] *= x_scaling_ratio_rendering
+
+            coordinates = list(np.array(np.round(coordinates), dtype=np.int32))
+
+
+            old = ast.literal_eval(self.target_of_selected_coordinates.text())
+            old.append(coordinates)
+            self.target_of_selected_coordinates.setText(str(old))
+            self.target_of_selected_coordinates = None
+        except Exception as e:
+            print(e)
+
+    def show_cascade_context_menu(self, pos, tree_view, model):
+        assert type(model) != type(None)
+        x = tree_view.indexAt(pos).column()
+        y = tree_view.indexAt(pos).row()
+        name = model.item(y,0).text()
+
+        if name == "mask values": # Mask values has two (string represenations) of lists as parameters.
+            # The first specifies which values should be removed from the 1D array. When option in dropdown menu is selectedFiles
+            # We set self.target_of_selected_coordinates accordingly. Cropping will append values to the list
+            add_to_mask = model.item(y,1)#First parameter (string that represents a list)
+            remove_from_mask = model.item(y,2)#Second parameter
+
+            self.popup_menu = QMenu(self)
+            self.popup_menu.addAction("Mask out values ...", lambda: self.set_target_of_selected_coordinates(add_to_mask))
+            #self.popup_menu.addSeparator()
+            self.popup_menu.addAction("Bring back values ...", lambda: self.set_target_of_selected_coordinates(remove_from_mask))
+            self.popup_menu.popup(QCursor.pos())
+
+    def set_target_of_selected_coordinates(self,target):
+        self.target_of_selected_coordinates = target
+
+
+    def load_attributions_cascade_1(self, filepath):
+        self.load_attributions(attributions_cascade_1=filepath)
+        self.filename_attributions_1 = filepath
+        self.update_model_via_attributions(1)
+
+    def load_attributions_cascade_2(self, filepath):
+        self.load_attributions(attributions_cascade_2=filepath)
+        self.filename_attributions_2 = filepath
+        self.update_model_via_attributions(2)
+
+    def load_attributions(self, attributions_cascade_1=None,attributions_cascade_2=None):
+        if attributions_cascade_1:
+            try:
+                with open(attributions_cascade_1, "rb") as f:
+                    self.attributions_cascade_1 = pickle.load(f)
+            except Exception as e:
+                print(e)
+        if attributions_cascade_2:
+            try:
+                with open(attributions_cascade_2, "rb") as f:
+                    self.attributions_cascade_2 = pickle.load(f)
+            except Exception as e:
+                print(e)
 
     def shut_down(self):
         try:#Cleat temporary files
@@ -104,31 +216,19 @@ class MainApp(QWidget):
             pass
 
         try:
-            with open(os.getcwd()+"/"+"attributions_cascade_1.ini", "wb") as f:
+            with open(self.filename_attributions_1, "wb") as f:
                 pickle.dump(self.attributions_cascade_1, f)
         except Exception as e:
             QMessageBox.about(self, "Fatal error", "Couldn't save attributions\n" + str(e))
             return
 
         try:
-            with open(os.getcwd()+"/"+"attributions_cascade_2.ini", "wb") as f:
+            with open(self.filename_attributions_2, "wb") as f:
                 pickle.dump(self.attributions_cascade_2, f)
         except Exception as e:
             QMessageBox.about(self, "Fatal error", "Couldn't save attributions\n" + str(e))
             return
         sys.exit()
-
-    """"def reload_cascade_attributions(self, filepath, cascade_no):
-        try:
-            with open(filepath, "rb") as f:
-                cascade = pickle.load(f)
-                if cascade_no == 1:
-                    self.attributions_cascade_1 = cascade
-                elif cascade_no ==2:
-                    self.attributions_cascade_2 = cascade
-        except:
-            print("Problem loading cascade attributions")
-            pass"""
 
     def remember_attributions(self, cascade_no):
         hash = self.get_hash()
@@ -143,7 +243,6 @@ class MainApp(QWidget):
         else:
             raise Exception("No such cascade")
 
-
     def get_hash(self):
         """ Returns hash value for current image based on it's filename and a hash of the values"""
         path = self.files[self.idx_image]
@@ -151,7 +250,7 @@ class MainApp(QWidget):
         with open(path,"rb") as f:
             hash_object = hashlib.sha512(f.read())
             hex_dig = hash_object.hexdigest()
-        hash = filename + hex_dig
+        hash = filename + " "+ hex_dig
         return hash
 
     def update_model_via_attributions(self, cascade_no):
@@ -184,12 +283,11 @@ class MainApp(QWidget):
             for row in cascade:
                 self.add_to_cascade_model(model, *row)#Add all items to model
         else:
-            print(hash)
+            #print(hash)
             attributions.keys()
 
-
-
     def load_files(self, path):
+        self.files_root_directory = path
         self.files = []#list of filepaths
         self.list_files(path, ".*\.docx")
         docx = self.files
@@ -217,34 +315,53 @@ class MainApp(QWidget):
                     self.files.append(path+"/"+f.name)
 
     def make_connections(self):
+        """ Establishes the connections between control elements and methods that implement the respective functionalities"""
+        #Connect image controls (next image, previous image etc.) ...
         self.ui.use_cropped.stateChanged.connect(self.toggle_use_crop)
         self.ui.next_image.clicked.connect(self.next_image)
         self.ui.previous_image.clicked.connect(self.previous_image)
         self.ui.show_image.clicked.connect(lambda: self.set_current_index(self.idx_image))
 
+        #Connections for filter cascade 1...
         self.ui.add_to_cascade_1.clicked.connect(lambda: self.add_function_to_cascade(self.ui.combo_box_cascade_1,self.model_cascade_1))
         self.ui.remove_from_cascade_1.clicked.connect(lambda: self.remove_selected_from_model(self.model_cascade_1, self.ui.view_cascade_1))
         self.ui.apply_cascade_1.clicked.connect(lambda: self.apply_cascade(self.model_cascade_1,self.ui.error_cascade_1))
-        self.ui.save_cascade_1.clicked.connect(self.cascade_outfile_dialog_1.create_outputfile)
+        self.ui.save_cascade_1.clicked.connect(self.cascade_outfile_dialog_1.create_output_file)
         self.cascade_outfile_dialog_1.outfilepath.connect(lambda path: self.save_cascade_model(self.model_cascade_1,path))
         self.ui.load_cascade_1.clicked.connect(self.cascade_loadfile_dialog_1.get_existing_file)
         self.cascade_loadfile_dialog_1.filepath.connect(lambda path: self.load_cascade_model(self.model_cascade_1,path))
 
+        #Connections for filter cascade 1: Connectiond for loading attribution files (that store the cacades for all images)...
+        self.ui.load_attributions_cascade_1.clicked.connect(self.cascade_load_attributions_1.get_file)
+        self.cascade_load_attributions_1.filepath.connect(self.load_attributions_cascade_1)
+
+        self.ui.specify_output_cascade_1.clicked.connect(self.cascade_specify_output_1.get_folder_path)
+        self.cascade_specify_output_1.folder.connect(self.specify_output_location)
+
+        #Connections for filter cascade 2...
         self.ui.add_to_cascade_2.clicked.connect(lambda: self.add_function_to_cascade(self.ui.combo_box_cascade_2,self.model_cascade_2))
         self.ui.remove_from_cascade_2.clicked.connect(lambda: self.remove_selected_from_model(self.model_cascade_2, self.ui.view_cascade_2))
         self.ui.apply_cascade_2.clicked.connect(lambda: self.apply_cascade(self.model_cascade_2,self.ui.error_cascade_2))
-        self.ui.save_cascade_2.clicked.connect(self.cascade_outfile_dialog_1.create_outputfile)
+        self.ui.save_cascade_2.clicked.connect(self.cascade_outfile_dialog_1.create_output_file)
         self.cascade_outfile_dialog_2.outfilepath.connect(lambda path: self.save_cascade_model(self.model_cascade_2,path))
         self.ui.load_cascade_2.clicked.connect(self.cascade_loadfile_dialog_2.get_existing_file)
         self.cascade_loadfile_dialog_2.filepath.connect(lambda path: self.load_cascade_model(self.model_cascade_2,path))
 
+        #Connections for filter cascade 1: Connectiond for loading attribution files (that store the cacades for all images)...
+        self.ui.load_attributions_cascade_2.clicked.connect(self.cascade_load_attributions_2.get_file)
+        self.cascade_load_attributions_2.filepath.connect(self.load_attributions_cascade_2)
+
+
     def apply_cascade(self, model, error_view):
+        """ Applies cascade and saves results if self.output_location was set"""
         img = None
         try:
             img = Image.open(self.files[self.idx_image])
             img = np.array(img.convert('I'), dtype=np.double)#Convert to grayscale
         except:
             return
+
+        self.box.toggle_enabled()#Avoid danger of segfault
 
         operations = self.cascade_model_to_list(model)
         data = image_to_cascade_data(img)
@@ -256,7 +373,7 @@ class MainApp(QWidget):
             plot = None
             slope_intercept = None
             background_image = img
-            if "houghlines" in data:
+            if "houghlines" in data and self.ui.draw_vertica_lines.isChecked():
                 slope_intercept = data["houghlines"]
             if "image_array" in data:
                 background_image = data["image_array"]
@@ -274,8 +391,26 @@ class MainApp(QWidget):
 
             self.ui.main_plot.update(color_plot(background_image, plot = plot, slope_intercept = slope_intercept))
 
+            if self.output_location != "":
+                self.save_output_for_current_file(data["columnwise"])
+
         except Exception as e:
             error_view.setText(str(e))
+        finally:
+            self.box.toggle_enabled()
+
+    def save_output_for_current_file(self,data):
+        current_file = self.files[self.idx_image]
+        subpath = current_file[len(self.files_root_directory):]#path in nested directory without root
+        outfile = self.output_location+subpath.split(".")[0]+".txt"#replace file_ending
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+
+        measurements = ""
+        measurements += "Column number \t\t|\t Polymer level\n"
+        for i, x in enumerate(data):
+            measurements += "Column " + str(i) + "\t\t|\t" + str(x) + " μm\n"
+        with open(outfile,"w") as f:
+            f.write(measurements)
 
 
     def cascade_model_to_list(self, model):
@@ -307,7 +442,6 @@ class MainApp(QWidget):
             for row in cascade:
                 self.add_to_cascade_model(model, *row)
 
-
     def add_function_to_cascade(self, combo_box, model):
         function = combo_box.currentText()
         parameters = function_to_default_params[function]
@@ -317,7 +451,6 @@ class MainApp(QWidget):
 
     def next_image(self):
         self.set_current_index(self.idx_image+1)
-
 
     def set_current_index(self, idx):
         if idx < 0 or idx >= len(self.files):
@@ -331,10 +464,8 @@ class MainApp(QWidget):
         self.update_model_via_attributions(1)
         self.update_model_via_attributions(2)
 
-
     def previous_image(self):
         self.set_current_index(self.idx_image-1)
-
 
     def show_image(self):
         try:
@@ -368,7 +499,10 @@ class MainApp(QWidget):
 
             elif event.key() == id_left:
                 self.previous_image()
-        return self.widget_handled.eventFilter(source, event)#forward event
+        try:#When closing the app the widget handled might already have been destroyed
+            return self.widget_handled.eventFilter(source, event)#Execute the default actions for the event
+        except:
+            return True#a true value prevents the event from being sent on to other objects
 
     def get_cascade_model(self, view, combobox):
         model = QStandardItemModel(0, 5, self)
@@ -390,7 +524,6 @@ class MainApp(QWidget):
             model.setData(model.index(current_row, i), str(s))
             item = root.child(current_row,i)
             item.setFlags( Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsDragEnabled | Qt.ItemIsEditable)#Allow only top level drop
-
 
     def remove_selected_from_model(self, model, view):
         idxs = view.selectedIndexes()
