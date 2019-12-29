@@ -37,14 +37,23 @@ from scipy.signal import argrelextrema
 class FileDialog(QWidget):
     outfilepath = pyqtSignal(str)
     folder = pyqtSignal(str)
-    filepath = pyqtSignal(str)
+    #filepath = pyqtSignal(str)
 
     def __init__(self, file_ending = ".csv"):
+        """ A File dialog could either be used to show a dialog to create and output file (i.e. to get a nonexisting path),
+            to open a file or to get the name of a folder. The respective member functions may be used in this respect. The filepath is returned and emitted as a pyqtSignal
+        Args:
+            file_ending: The file ending of the file to be selected (Use empty string for Folder selection)
+        """
         self.file_ending = file_ending
         self.columns = None
         QWidget.__init__(self)
 
     def create_output_file(self):
+        """ Opens dialog for non-existing files and returns path.
+        Returns:
+            Path to a non-existing file (str). If the specified filename does not end with self.filepath the respective ending is added.
+        """
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         filename, _ = QFileDialog.getSaveFileName(None,"Select the output file", "", self.file_ending[:] +" (*."+self.file_ending[1:]+");;", options=options)
@@ -56,6 +65,10 @@ class FileDialog(QWidget):
         return filename
 
     def open_file(self):
+        """ Opens a file dialog for existing files. Emits path as signal outfilepath.
+        Returns:
+            Path to existing file. The ending specified in self.filepath is added if the file does not already end with named string (str)
+        """
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         filename, _ = QFileDialog.getOpenFileName(None,"Select the output file", "", self.file_ending[1:] +" (*."+self.file_ending[1:]+");;", options=options)
@@ -64,6 +77,10 @@ class FileDialog(QWidget):
 
 
     def get_folder_path(self):
+        """ Opens dialog for folder selection. Emits path as signal folder.
+        Returns:
+            Path to folder (str)
+        """
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         path = QFileDialog.getExistingDirectory(None,"Select folder...",os.getcwd(),options=options)
@@ -100,6 +117,7 @@ class MicroTomographyAnalyzer(QWidget):
         self.make_connections()
 
     def set_display_axis(self, axis):
+        """ Sets axis that is used to slice tensor for display purposes """
         if axis == "yx":
             self.slice_xy = True
             self.slice_xz = False
@@ -115,6 +133,7 @@ class MicroTomographyAnalyzer(QWidget):
         self.display_slice(0)
 
     def make_connections(self):
+        """ Esdtablishes connections between GUI and fucntionalities."""
         self.tensor_loader.tensor.connect(self.set_tensor)
         self.tensor_loader.update_info.connect(self.ui.progress.setValue)
         self.ui.next.clicked.connect(lambda: self.display_slice(self.current_slice+1))
@@ -133,6 +152,7 @@ class MicroTomographyAnalyzer(QWidget):
 
 
     def next_display_page(self):
+        """ Display next page (Slices, Detected pores or measured polymer level)"""
         if self.ui.display_stack.currentIndex()+1 == self.ui.display_stack.count():
             return
         try:
@@ -141,6 +161,7 @@ class MicroTomographyAnalyzer(QWidget):
             pass
 
     def previous_display_page(self):
+        """ Display previous page (Slices, Detected pores or measured polymer level)"""
         if self.ui.display_stack.currentIndex() == 0:
             return
         try:
@@ -149,6 +170,8 @@ class MicroTomographyAnalyzer(QWidget):
             pass
 
     def set_source_dir(self, source_dir):
+        """ Sets path to source directory """
+
         self.source_dir = source_dir
         files = [os.path.join(self.source_dir,x) for x in os.listdir(self.source_dir)]
         self.ui.loading_info_stack.setCurrentIndex(1)
@@ -156,6 +179,10 @@ class MicroTomographyAnalyzer(QWidget):
         self.tensor_loader.start()
 
     def set_tensor(self, tensor):
+        """ Sets 3D data tensor
+        Args:
+            tensor: 3D Numpy array
+        """
         self.tensor = tensor
         self.ui.loading_info_stack.setCurrentIndex(0)
         self.ui.file_info.setText("Loaded tensor successfully")
@@ -163,9 +190,11 @@ class MicroTomographyAnalyzer(QWidget):
         self.slicer.update_axis_bounds()
 
     def get_tensor(self):
+        """ Returns current tensor """
         return self.tensor
 
     def get_current_slice(self):
+        """ Getter for current slice"""
         slice = None
         idx = self.current_slice
         if self.slice_xy:
@@ -177,6 +206,7 @@ class MicroTomographyAnalyzer(QWidget):
         return slice
 
     def display_slice(self, idx):
+        """ Displayes current slicev"""
         old_idx = self.current_slice
         try:
             self.current_slice = idx
@@ -188,6 +218,7 @@ class MicroTomographyAnalyzer(QWidget):
             traceback.print_tb(err.__traceback__)
 
     def set_column_positions(self, columns):
+        """ Sets value for indicator that shows column potistions """
         self.set_column_positions = columns
 
     def eventFilter(self, source, event):
@@ -214,13 +245,16 @@ class MicroTomographyAnalyzer(QWidget):
         update_info = pyqtSignal(int)
 
         def __init__(self):
+            """ Thread for loading tensor from image files in parallel"""
             super(MicroTomographyAnalyzer.TensorLoader, self).__init__()
             self.files = None
 
         def set_files(self,files):
+            """ Sets filenames"""
             self.files = files
 
         def run(self):
+            """ Loads tensor. Emits data as self.tensor (PyQtSignal)."""
             if not self.files:
                 return
             files = self.files
@@ -246,6 +280,7 @@ class MicroTomographyAnalyzer(QWidget):
     class Slicer(QWidget):
         output_tensor = pyqtSignal(np.ndarray)
         def __init__(self, parent_controller):
+            """ Slices tensor according to parameters set via GUI"""
             super(MicroTomographyAnalyzer.Slicer,self).__init__()
             self.ui = parent_controller.ui
             self.parent_controller = parent_controller
@@ -260,6 +295,7 @@ class MicroTomographyAnalyzer(QWidget):
                 traceback.print_tb(err.__traceback__)
 
         def update_axis_bounds(self):
+            """ Sets text for axis bounds to respective to the respective labels in the GUI"""
             tensor = self.parent_controller.get_tensor()
             if type(tensor)==type(None):
                 return
@@ -291,10 +327,12 @@ class MicroTomographyAnalyzer(QWidget):
             high_dim2.setValue(shape[1])
 
         def reset_preview(self):
+            """ Resets the preview showing snippet"""
             self.update_axis_bounds()
             self.slice_preview()
 
         def slice_preview(self):
+            """ Shows slice of tensor. Slicing is achieved using values specified in UI """
             try:
                 slice = self.parent_controller.get_current_slice()
                 low_dim1 = self.ui.low_bound_dim1.value()
@@ -308,6 +346,7 @@ class MicroTomographyAnalyzer(QWidget):
                 pass
 
         def make_connections(self):
+            """ Establish conncetions between GUI and methods"""
             self.parent_controller.ui.axis.currentTextChanged.connect(lambda x: self.update_axis_bounds())
 
             self.parent_controller.ui.low_bound_dim1.valueChanged.connect(lambda x: self.slice_preview())
@@ -318,6 +357,7 @@ class MicroTomographyAnalyzer(QWidget):
             self.parent_controller.ui.apply_slicing.clicked.connect(lambda x: self.apply_slicing())
 
         def apply_slicing(self):
+            """ Applys slicing to the whole tensor """
             message = "Note that you cannot undo this step but you must load the tensor from file again to go back."
             message += "\n\nDo you really want to overwrite the tensor with the current subtensor?"
             response = QMessageBox.question(self, 'Warning', message,QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -345,12 +385,18 @@ class MicroTomographyAnalyzer(QWidget):
         progress = pyqtSignal(int)
         done = pyqtSignal(int)
         def __init__(self,outer):
+            """ Rotates tensor around center point in two axis
+            Args:
+                outer: Outer instance that owns the GUI.
+            """
             super(MicroTomographyAnalyzer.Rotator,self).__init__()
             self.ui = outer.ui
             self.outer = outer
             self.angle = None
             self.make_connections()
+
         def make_connections(self):
+            """ Establishes connections between GUI elements and methods"""
             self.ui.rotation_angle.valueChanged.connect(self.rotate_preview)
             self.output_tensor.connect(self.outer.set_tensor)
             self.progress.connect(self.ui.progress.setValue)
@@ -358,12 +404,14 @@ class MicroTomographyAnalyzer(QWidget):
             self.ui.apply_rotation.clicked.connect(self.rotate_tensor)
 
         def rotate_preview(self, angle):
+            """ Computes preview for 2d slice and displays it """
             self.angle = angle
             slice = self.outer.get_current_slice()
             slice = Image.fromarray(np.array(slice,dtype=np.uint32)).rotate(angle,resample=PIL.Image.BICUBIC)
             self.ui.slices.update(np.array(slice))
 
         def rotate_tensor(self):
+            """ Interface method for rotating whole tensor """
             message = "Note that you cannot undo this step but you must load the tensor from file again to go back."
             message += "Rotation is lossless only for (+/-) 90, 180 and 270 degrees"
             message += "\n\nDo you really want to overwrite the tensor with the specified rotation in the current dimension?"
@@ -376,6 +424,7 @@ class MicroTomographyAnalyzer(QWidget):
             self.start()
 
         def run(self):
+            """ Working method for parallel rotation of whole 3d tensor"""
             angle = self.angle
             tensor = self.outer.tensor
             output_tensor = np.ndarray(shape=tensor.shape)
@@ -403,6 +452,10 @@ class MicroTomographyAnalyzer(QWidget):
         plot = pyqtSignal(np.ndarray)
         points_sampled = pyqtSignal(int)
         def __init__(self, outer):
+            """ Initializes column detection
+            Args:
+                outer: Outer instance that owns the GUI.
+            """
             super(MicroTomographyAnalyzer.ColumnDetector,self).__init__()
             self.outer = outer
             self.ui = outer.ui
@@ -417,12 +470,14 @@ class MicroTomographyAnalyzer(QWidget):
             self.make_connections()
 
         def make_connections(self):
+            """ Establishes connections between GUI elements and methods"""
             self.ui.start_column_detection.clicked.connect(self.detect_columns)
             self.column_positions.connect(self.outer.set_column_positions)
             self.plot.connect(lambda x: (self.ui.display_stack.setCurrentWidget(self.ui.page_detected_columns),self.ui.detected_columns.update(x)))
             self.points_sampled.connect(lambda x: self.ui.n_points_sampled.setText(str(x)))
 
         def detect_columns(self):
+            """ Inteface method for performing column detection """
             self.selem_size = self.ui.selem_size.value()
             self.z_for_mean_start = self.ui.z_for_mean_start.value()
             self.z_for_mean_end = self.ui.z_for_mean_end.value()
@@ -431,6 +486,13 @@ class MicroTomographyAnalyzer(QWidget):
             self.start()
 
         def print_points_and_background(self, img, x,y, point_size=.3, marker ="."):
+            """ Prints samled points in front of image
+            Args:
+                img: Image as numpy array
+                x: Vector of x positions
+                y: Vector of y positions
+
+            """
             fig, ax = plt.subplots(1, figsize=(12,10))
 
             ax.set_xlim((0, img.shape[1]))
@@ -440,6 +502,8 @@ class MicroTomographyAnalyzer(QWidget):
             return fig
 
         def run(self):
+            """ Detects columns by thresholds for retrieving dark parts (pores of capillary columns) and clustering the resulting points using
+                either agglomerative clustering or a custom matrix based approach where points are repeatetedly moved to the center of gravity of the surrounding patch."""
             tensor = self.outer.get_tensor()
             if type(tensor) == type(None):
                 return
@@ -511,6 +575,10 @@ class MicroTomographyAnalyzer(QWidget):
         """ Uses grayvalue slope to detect likely position of start, end and length of infiltrated part in each column"""
         measurements = pyqtSignal(pd.DataFrame)
         def __init__(self, outer):
+            """ Initializes polymer level measuring.
+            Args:
+                outer: Outer instance that owns the GUI.
+            """
             super(MicroTomographyAnalyzer.ColumnwisePolymer, self).__init__()
             self.outer = outer
             self.ui = outer.ui
@@ -524,6 +592,8 @@ class MicroTomographyAnalyzer(QWidget):
             self.make_connections()
 
         def make_connections(self):
+            """ Establishes connections between GUI elements and methods"""
+
             self.ui.start_sampling.clicked.connect(self.start)
             self.measurements.connect(self.set_model)
             self.ui.save_polymer_level.clicked.connect(self.outfile_specifier.create_output_file)
@@ -532,10 +602,15 @@ class MicroTomographyAnalyzer(QWidget):
             self.ui.save_grayvalue_slopes.clicked.connect(self.save_grayvalue_slopes)
 
         def set_column_positions(self, column_positions):
+            """ Setter for column_positions. Sets self.x and self.y values.
+            Args:
+                column_positions: Nested list containing x and y positions.
+            """
             self.column_x = column_positions[0]
             self.column_y = column_positions[1]
 
         def save_grayvalue_slopes(self):
+            """ Saves grayvalue slopes as png image"""
             try:
                 file_dialog = FileDialog(".png")
                 filepath = file_dialog.create_output_file()
@@ -554,29 +629,41 @@ class MicroTomographyAnalyzer(QWidget):
                 print(e)
 
         def set_polymer_level(self, imbibition_front):
+            """ Sets polymer level and displays result"""
             self.imbibition_front = imbibition_front
             self.display(imbibition_front)
 
         def sample(self):
+            """ Interdace for sampling column positions """
             if type(self.imbibition_front) == type(None):
                 QMessageBox.information(None, "Cuould not find imbibition front","Perform sampling of grayvalue slopes first.")
                 return
             self.start()
 
         def minima(self, vector, pre_smoothing=2):
+            """ Returns indices of local minima sorted by value at each indice starting with the highest value
+            vector: Vector of data
+            pre_smoothing: Set high values to detect substantial peaks only.
+            """
             return argrelextrema(gaussian_filter(vector,pre_smoothing),np.less)[0]
 
         def maxima(self, vector, pre_smoothing=2):
-            """ Returns indices of local maxima sorted by value at each indice starting with the highest value"""
+            """ Returns indices of local maxima sorted by value at each indice starting with the highest value
+            vector: Vector of data
+            pre_smoothing: Set high values to detect substantial peaks only.
+            """
             return argrelextrema(gaussian_filter(vector,pre_smoothing),np.greater)[0]
 
         def minima(self, vector, pre_smoothing=2):
+            """ Returns indices of local minima sorted by value at each indice starting with the highest value
+            vector: Vector of data
+            pre_smoothing: Set high values to detect substantial peaks only.
+            """
             return argrelextrema(gaussian_filter(vector,pre_smoothing),np.less)[0]
 
-        def maxima(self, vector, pre_smoothing=2):
-            return argrelextrema(gaussian_filter(vector,pre_smoothing),np.greater)[0]
 
         def sort_by(self, to_sort,order_by):
+            """ Sorts list using list that defines order """
             return np.array(sorted(zip(order_by,to_sort)))
 
         def figure(self, polymer_level_columnwise, x1=None, x2=None):
@@ -622,6 +709,11 @@ class MicroTomographyAnalyzer(QWidget):
             return fig
 
         def display(self, polymer_level_columnwise):
+            """ Displays polymer level
+            Args:
+                polymer_level_columnwise: Columnwise polymer level as 2d matrix of grauvalue slopes.
+
+            """
             self.ui.imbibition_front.update(fig2rgb_array(self.figure(polymer_level_columnwise)))
             self.ui.display_stack.setCurrentWidget(self.ui.page_front_display)
 
@@ -637,10 +729,15 @@ class MicroTomographyAnalyzer(QWidget):
             window = vector[expected_value-radius:expected_value+radius]
             return expected_value-radius+np.median(np.where(window==np.min(window)))
 
-        def minima(self, vector, pre_smoothing=2):
-            return argrelextrema(gaussian_filter(vector,pre_smoothing),np.less)[0]
 
         def closest_substantial_minimum(self, vector, expected_value, radius, pre_smoothing=2):
+            """ Returns closest substantial minimum to specified expected_value that relies within a radius around.
+            Args:
+                vector: Vector of data.
+                expected_value: Used to search for a substantial minimum within a radius
+                radius: radius
+                pre_smoothing: Factor for smoothing. Only more substantial minima remain if higher values are specified.
+            """
             window = vector[expected_value-radius:expected_value+radius]
             mins = self.minima(vector, pre_smoothing)
             if len(mins) ==0:
@@ -649,6 +746,7 @@ class MicroTomographyAnalyzer(QWidget):
             return mins[idx]
 
         def run(self):
+            """ Samples column positions for the infiltration/imbibition front and the interface between polymer and porous aluminum"""
             #Get expected values
             polymer_level_columnwise = self.imbibition_front
             mean = np.mean(polymer_level_columnwise, axis = 0)
@@ -695,21 +793,30 @@ class MicroTomographyAnalyzer(QWidget):
             self.measurements.emit(df)
 
         def set_model(self, df):
+            """ Sets model data to respective Tableview in the GUI
+            args:
+                df: Dataframe of polymer levels per column
+            """
             self.dataset = df
             self.table_model = PandasModel(df)
             self.ui.polymer_level.setModel(self.table_model)
 
         def save_csv(self, path):
+            """ Saves detected polymer level as csv
+            Args:
+                path: Filepath the csv is saved to
+            """
             df = self.dataset
             df.to_csv(path,";")
 
 
-
-
     class ImbibitionFront(QThread):
-        """ Samples slope of grayvalues for each column """
         polymer_level_columnwise = pyqtSignal(np.ndarray)
         def __init__(self, outer):
+            """ Samples slope of grayvalues for each column.
+            Args:
+                outer: Outer instance that owns the GUI.
+            """
             super(MicroTomographyAnalyzer.ImbibitionFront, self).__init__()
             self.outer = outer
             self.ui = outer.ui
@@ -719,16 +826,21 @@ class MicroTomographyAnalyzer(QWidget):
             self.make_connections()
 
         def set_column_positions(self, column_positions):
+            """ Sets column positions
+            args:
+                column_positions: Position of columns.
+            """
             self.column_x = column_positions[0]
             self.column_y = column_positions[1]
 
         def make_connections(self):
+            """ Establish connections between GUI and member methods"""
             self.ui.sample_imbibition_front.clicked.connect(self.find)
             #self.polymer_level_columnwise.connect(self.display)
             self.polymer_level_columnwise.connect(self.outer.columnwise_polymer.set_polymer_level)
 
-
         def find(self):
+            """ Interface method for sampling grayvalue slopes for each detected capillary pore """
             if type(self.column_x) == type(None) or type(self.column_y) == type(None):
                 QMessageBox.information(None, "Cuould not find imbibition front","Perform column detection first.")
                 return
@@ -739,6 +851,7 @@ class MicroTomographyAnalyzer(QWidget):
 
 
         def run(self):
+            """ Samples grayvalue slopes for each detected capillary pore in a window size of 8 px around the center """
             tensor = self.outer.tensor#dimensions y, x, z, column positions are sampled for positions y and x
 
             w_size = 4
@@ -758,6 +871,7 @@ class MicroTomographyAnalyzer(QWidget):
 
 class Main():
     def __init__(self):
+        """ Initializes program. Starts app, creates window and implements functions accessible via action bar."""
         self.app = QtWidgets.QApplication(sys.argv)
         self.set_color_theme(self.app, "light")
 
@@ -780,6 +894,12 @@ class Main():
         sys.exit()
 
     def set_color_theme(self,app, color):
+        """ Set ui color scheme to either dark or bright
+        Args:
+            app: PyQt App the color scheme is applied to
+            color: String specifying the color scheme. Either "dark" or "bright".
+
+        """
         path = ""
         if color == "dark":
             path += ":/dark.qss"
@@ -795,12 +915,14 @@ class Main():
         app.setStyleSheet(stream.readAll())
 
     def make_connections(self):
+        """ Establishes connections between actions and GUI elements"""
         self.main_ui.actionOpen.triggered.connect(self.source_dir_opener.get_folder_path)
         self.source_dir_opener.folder.connect(self.main_app.set_source_dir)
         self.main_ui.actionSave.triggered.connect(self.save_current_tensor)
         self.main_ui.actionOpen_Tensor.triggered.connect(self.load_tensor)
 
     def save_current_tensor(self):
+        """ Saves current tensor as numpy container"""
         if type(self.main_app.tensor) == type(None):
             QMessageBox.information(None, "Saving not possible","There is no tensor data")
         dialog = FileDialog(".npy")
@@ -813,6 +935,7 @@ class Main():
             QMessageBox.information(None, "Saving not possible","There was a problem writing the file " + str(e))
 
     def load_tensor(self):
+        """ Loads previously saved tensor as numpy container"""
         dialog = FileDialog(".npy")
         path = dialog.open_file()
         try:
@@ -823,4 +946,4 @@ class Main():
             QMessageBox.information(None, "Loading not possible","There was a problem loading the file " + str(e))
 
 if __name__ == "__main__":
-    m = Main()
+    m = Main()#start app
