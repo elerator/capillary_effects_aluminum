@@ -33,6 +33,7 @@ from pandas_model import PandasModel
 from scipy.signal import argrelextrema
 from scipy.ndimage import gaussian_filter
 from scipy.signal import argrelextrema
+from scipy.signal import detrend
 
 class FileDialog(QWidget):
     outfilepath = pyqtSignal(str)
@@ -478,7 +479,10 @@ class MicroTomographyAnalyzer(QWidget):
 
         def detect_columns(self):
             """ Inteface method for performing column detection """
-            self.selem_size = self.ui.selem_size.value()
+            self.clip_limit = self.ui.clip_limit.value()#interact with ui before starting the thread
+            self.kernel_size = self.ui.kernel_size.value()#interact with ui before starting the thread
+            self.mixing = self.ui.mixing.value()#interact with ui before starting the thread
+
             self.z_for_mean_start = self.ui.z_for_mean_start.value()
             self.z_for_mean_end = self.ui.z_for_mean_end.value()
             self.threshold = self.ui.threshold_column_detection.value()
@@ -512,17 +516,35 @@ class MicroTomographyAnalyzer(QWidget):
                 return
 
             # 1. Select slices normalize, compute average along axiz z and perform local histogram equalization
-            subtensor = tensor[:,:,self.z_for_mean_start:self.z_for_mean_end]
+            subtensor = tensor[:,:,self.z_for_mean_start:self.z_for_mean_end].copy()
+            from skimage import exposure
+            for slice in subtensor:
+                slice -= np.min(slice)
+                slice /= np.max(slice)
+                slice *= 2
+                slice -= 1
+                #slice = exposure.equalize_hist(slice)#exposure.equalize_adapthist(slice, clip_limit=0.03)
             img = np.mean(subtensor, axis =2)
             img -= np.min(img)
             img /= np.max(img)
 
-            img = rank.equalize(img, selem=disk(self.selem_size))
-            img = gaussian_filter(img,1)
+            no_histogram_eq = img.copy()
 
-            img = np.mean(subtensor, axis =2)
+            img = exposure.equalize_adapthist(img, clip_limit=self.clip_limit/100, kernel_size=self.kernel_size)#rank.equalize(img, selem=disk(self.selem_size))
+            img = gaussian_filter(img,3)
+
             img -= np.min(img)
             img /= np.max(img)
+
+            assert str(img.shape) == str(no_histogram_eq.shape)
+            print(img.shape)
+            print(no_histogram_eq.shape)
+
+            img = no_histogram_eq*(self.mixing/100)+img*((1-self.mixing)/100)
+
+            img -= np.min(img)
+            img /= np.max(img)
+
 
             # 2. Thresholding
             binarized = img<self.threshold/100
@@ -702,6 +724,7 @@ class MicroTomographyAnalyzer(QWidget):
                 x /= np.max(x)
                 standardized_front[i] = x
 
+            plt.close()
             fig, ax = plt.subplots(1, figsize=(12,10))
             ax.axvline(x1, color='r', linestyle='-')
             ax.axvline(x2, color='r', linestyle='-')
@@ -726,8 +749,14 @@ class MicroTomographyAnalyzer(QWidget):
 
         def minimum_within_radius(self, vector, expected_value, radius):
             """ Returns minimum within radius """
-            window = vector[expected_value-radius:expected_value+radius]
-            return expected_value-radius+np.median(np.where(window==np.min(window)))
+            if (expected_value-radius < 0) or (expected_value+radius >= len(vector)):
+                raise ValueError("Radius too small or large for expected value. Cropping window outside of data.")
+
+            window = vector[expected_value-radius:expected_value+radius].copy()
+            window = detrend(window)
+            assert len(window) >= 1
+            pos_in_window = np.median(np.where(window==np.min(window)))
+            return expected_value-radius+pos_in_window
 
 
         def closest_substantial_minimum(self, vector, expected_value, radius, pre_smoothing=2):
@@ -749,16 +778,8 @@ class MicroTomographyAnalyzer(QWidget):
             """ Samples column positions for the infiltration/imbibition front and the interface between polymer and porous aluminum"""
             #Get expected values
             polymer_level_columnwise = self.imbibition_front
-            mean = np.mean(polymer_level_columnwise, axis = 0)
-            peaks = self.maxima(mean)
-            vals_at_peaks = mean[peaks]
-            x1, x2 = self.sort_by(peaks,vals_at_peaks)[-2:,1]#Get two largest peaks
-            if not x1:
-                x1 = 0
-            if not x2:
-                x2 = 0
-            x1 = int(x1)
-            x2 = int(x2)
+            x1 = self.ui.left_expected_value.value()
+            x2 = self.ui.right_expected_value.value()
 
             sampling_rule = str(self.ui.sampling_rule.currentText())
             try:
@@ -771,8 +792,12 @@ class MicroTomographyAnalyzer(QWidget):
                         elif sampling_rule ==  "Closest substantial minimum to expected value":
                             left_front.append(self.closest_substantial_minimum(row,x1,self.ui.maxdist_extrema.value()))
                             right_front.append(self.closest_substantial_minimum(row,x2,self.ui.maxdist_extrema.value()))
+            except ValueError:
+                QMessageBox.information(None, "Radius too large for specified expected values","Adjust radius or expected value")
+                return
             except Exception as e:
                 traceback.print_tb(e.__traceback__)
+                return
 
 
             left_front = np.array(left_front)
@@ -783,6 +808,8 @@ class MicroTomographyAnalyzer(QWidget):
             scaling_factor = 1.0#For pixels
 
             data = np.array([np.array(left_front)*scaling_factor,np.array(right_front)*scaling_factor,level*scaling_factor]).T
+
+            print(data)
 
             data_with_positions = np.ndarray(shape=(data.shape[0],data.shape[1]+2))
             data_with_positions[:,0:-2] = data
@@ -863,7 +890,7 @@ class MicroTomographyAnalyzer(QWidget):
                                 pad + int(x)-w_size:int(x)+w_size + pad,
                                 pad:-pad]
                 column = np.nansum(np.nansum(column,axis=0),axis=0)
-                through_columns.append(column)
+                through_columns.append(detrend(column))
 
             through_columns = np.array(through_columns)
             self.polymer_level_columnwise.emit(through_columns)
