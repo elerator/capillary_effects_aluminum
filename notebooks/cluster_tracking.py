@@ -256,7 +256,7 @@ class FastDensityClustering():
             gravity_type: The kind and shape of the environment. Either "disk", "gaussian" or "uniform" (for square neighborhood without weighting)
             frames: The number of frames to be processed
             search_window_size: The size of the neighborhood that is evaluated to find the closest clustercenter at t+1
-            mode:
+            mode: Mode of finding the closest center
         Returns:
             mappings_out: The mappings between labels of clusters in one frame to the ones in the subsequent frame
             preliminary_label_tensor: The tensor of labeled slices. It has the same shape as roi. The background is zero and clusters range from 1 to n.
@@ -345,7 +345,7 @@ class FastDensityClustering():
             for key in list(layer_dict.keys()):
                 final_tensor = FastDensityClustering.track(mapp1, key, preliminary_label_tensor, layer, out, i)
                 i += 1
-                
+
         return final_tensor
 
     @staticmethod
