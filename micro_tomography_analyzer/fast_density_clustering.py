@@ -150,6 +150,9 @@ class FastDensityClustering():
         labels = np.zeros(cluster_array.shape)
         for i in range(0,len(center_y)):
             m = np.array(raw_labels[center_y[i],center_x[i]])
+            if m.ndim <= 1:
+                print("invalid m")
+                continue
             labels[m[:,0],m[:,1]] = i
             center_y[i] = np.mean(m[:,0])
             center_x[i] = np.mean(m[:,1])

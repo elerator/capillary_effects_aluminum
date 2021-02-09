@@ -123,11 +123,11 @@ class MicroTomographyAnalyzer(QWidget):
             self.slice_xy = True
             self.slice_xz = False
             self.slice_yz = False
-        elif axis == "yz":
+        elif axis == "xz":
             self.slice_xy = False
             self.slice_xz = True
             self.slice_yz = False
-        elif axis == "xz":
+        elif axis == "yz":
             self.slice_xy = False
             self.slice_xz = False
             self.slice_yz = True
